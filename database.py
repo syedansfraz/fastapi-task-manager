@@ -8,8 +8,11 @@ DATABASE_URL = os.environ.get(
     "postgresql+psycopg://taskadmin:devpassword@localhost:5432/taskdb"
 )
 
+# Normalize whatever Railway provides to explicitly use the psycopg (v3) driver
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=10)
 SessionLocal = sessionmaker(bind=engine)
