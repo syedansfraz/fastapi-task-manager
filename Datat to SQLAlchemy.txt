@@ -1,0 +1,114 @@
+Now the complete code flow — how your database gets created
+Let me walk through exactly what happens when you run uvicorn api:app --reload:
+Step 1 — Python reads database.py
+pythonDATABASE_URL = "sqlite:///tasks.db"
+This is just a string telling SQLAlchemy where the database lives. sqlite:/// means local file. tasks.db is the filename.
+
+Step 2 — Engine is created
+pythonengine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+Think of engine as the actual connection to your database. Like a phone line between Python and SQLite.
+check_same_thread=False is SQLite specific — it allows FastAPI to use the connection from multiple requests simultaneously.
+
+Step 3 — SessionLocal is created
+pythonSessionLocal = sessionmaker(bind=engine)
+A Session is like a temporary workspace for one database operation. Every request to your API gets its own session — does its work — then closes.
+Think of it like this:
+Each API request = one customer at a bank
+Session          = one bank teller serving that customer
+Engine           = the bank itself
+
+Step 4 — Base is created
+pythonBase = declarative_base()
+Base is the parent class all your database models inherit from. It keeps track of all your tables so SQLAlchemy knows what to create.
+
+Step 5 — TaskModel defines your table
+pythonclass TaskModel(Base):
+    __tablename__ = "tasks"
+    id       = Column(Integer, primary_key=True, index=True)
+    title    = Column(String, nullable=False)
+    deadline = Column(String, nullable=False)
+    done     = Column(Boolean, default=False)
+This class is a blueprint for your tasks table. Each Column = one column in the database.
+TaskModel class         →      tasks table in database
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+id = Column(Integer)    →      id  INTEGER PRIMARY KEY
+title = Column(String)  →      title  TEXT
+deadline = Column(String)→     deadline  TEXT
+done = Column(Boolean)  →      done  BOOLEAN
+
+Step 6 — init_db() creates the actual table
+pythondef init_db():
+    Base.metadata.create_all(bind=engine)
+Base.metadata knows about every class that inherited from Base — in your case TaskModel. create_all looks at those classes and creates the actual tables in the database file if they do not exist yet.
+This runs once when your server starts:
+python# In api.py
+app = FastAPI()
+init_db()       # ← runs immediately on startup
+
+Step 7 — Every request gets a session via get_db()
+pythondef get_db():
+    db = SessionLocal()   # open a session
+    try:
+        yield db          # give it to the endpoint function
+    finally:
+        db.close()        # always close after request finishes
+yield means — give this to whoever asked for it, wait for them to finish, then run the finally block. This guarantees the session always closes even if an error occurs.
+
+Step 8 — Depends(get_db) injects the session
+python@app.get("/tasks")
+def get_tasks(db: Session = Depends(get_db)):
+Depends(get_db) tells FastAPI: before running get_tasks, call get_db() first and pass whatever it returns as db. This is called dependency injection — a core backend concept used in every framework.
+
+Step 9 — The 4 database operations
+GET — read all tasks:
+pythontasks = db.query(TaskModel).all()
+# SQL equivalent: SELECT * FROM tasks
+POST — add a task:
+pythondb.add(new_task)    # stage the new record
+db.commit()         # write it to database permanently
+db.refresh(new_task)# reload from db to get auto-generated id
+# SQL equivalent: INSERT INTO tasks VALUES (...)
+PUT — update a task:
+pythontask = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+# SQL equivalent: SELECT * FROM tasks WHERE id = task_id LIMIT 1
+
+task.done = task_data.done  # change the value in memory
+db.commit()                 # save the change to database
+# SQL equivalent: UPDATE tasks SET done = ? WHERE id = ?
+DELETE — remove a task:
+pythondb.delete(task)   # mark for deletion
+db.commit()       # execute the deletion
+# SQL equivalent: DELETE FROM tasks WHERE id = task_id
+
+Why db.commit() exists
+Database changes are not saved immediately. They sit in a temporary transaction first. commit() is you saying "yes I am sure, save this permanently."
+If something crashes before commit — nothing is saved. Your data stays safe. This protects against half-finished operations corrupting your database.
+
+Why db.refresh() after commit
+After commit() the object in Python memory is stale — the database may have added things like the auto-generated id. refresh() reloads the object from the database so your Python object reflects what is actually stored.
+pythondb.add(new_task)      # id is None here
+db.commit()           # database assigns id = 5
+db.refresh(new_task)  # now new_task.id = 5 in Python too
+
+The complete picture
+uvicorn starts
+      ↓
+init_db() runs → tasks.db file created → tasks table created
+      ↓
+Request arrives → POST /tasks
+      ↓
+get_db() opens a session
+      ↓
+TaskCreate validates incoming JSON (Pydantic)
+      ↓
+TaskModel object created in Python memory
+      ↓
+db.add() stages it
+      ↓
+db.commit() writes to tasks.db permanently
+      ↓
+db.refresh() reloads with database-generated id
+      ↓
+Response sent back
+      ↓
+finally: db.close() — session closed
