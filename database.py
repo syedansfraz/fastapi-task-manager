@@ -1,8 +1,16 @@
 from sqlalchemy import create_engine, Column, Integer, String, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+import os
 
-DATABASE_URL = "postgresql+psycopg://taskadmin:devpassword@localhost:5432/taskdb"
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+psycopg://taskadmin:devpassword@localhost:5432/taskdb"
+)
+
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+
 engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=10)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
